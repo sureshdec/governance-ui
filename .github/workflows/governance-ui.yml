@@ -1,1 +1,99 @@
-
+name: governance-UI
+on:
+  push:
+    branches: [ 'master' ]
+  paths:
+      - ci/cloudFormationTemplates/jd-data-catalog-redis-cache-stack.yml"
+      - ci/config/redis/devl.json
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      ENVIRONMENT:
+        description: 'ENVIRONMENT'
+        required: true
+        default: 'devl'
+      VERSION:
+        description: 'UI Version'
+        required: true
+        default: '2'
+env:
+  projectName: enterprise-data-governance-center
+jobs:
+  buildtest:
+   runs-on: [ deere-ubuntu-latest]
+   steps:
+    - name: checkout 
+      uses: actions/checkout@v2
+    - name: node setup
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/NodeSetup@master
+      with:
+        node-version: 14.17.3
+    - name: Configure run-command
+      uses: webfactory/ssh-agent@v0.5.1
+      with:
+        ssh-private-key: |
+          ${{ secrets.SSH_KEY }}
+    - name: add ssh host
+      run: |
+        ssh-keyscan -t rsa github.deere.com >>~/.ssh/known_hosts  
+    - name: Deployment Setup
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/nodeInstall@master
+    - name: Unit tests
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/nodeTest@master
+    - name: Package
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/zipAndStash@master
+      with:
+        filename: $projectName
+    - name: Veracode SCA
+      if: ${{ github.event.ref == 'refs/heads/master' }}
+      uses: EDL/ActionTemplates/.github/actions/Veracodesca@master 
+    - name: 'Tar files'
+      run: tar -cvf node_modules.tar node_modules/   
+    - name: Upload Artifact
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/UploadArtifact@master
+      with:
+        name: node_modules
+        path: node_modules.tar 
+ devldeploy:
+   name: devl deploy
+   if: github.event.inputs.environment  == 'devl'
+   runs-on: deere-ubuntu-latest
+   needs: [buildtest]
+   steps:
+    - name: checkout
+      uses: actions/checkout@v2
+    - name: devl get_aws_credentials
+      uses: github-actions-enablement/get-aws-credentials@v2
+      with:
+         OKTA_CLIENT_ID: ${{ secrets.OKTA_CLIENT_ID }}
+         OKTA_CLIENT_SECRET: ${{ secrets.OKTA_CLIENT_SECRET }}
+         ROLE_ARN: "arn:aws:iam::541843007032:role/jenkins/appslave-jenkins-edl" 
+    - name: dev - deploy redis cache stack
+      if: ${{ github.event.ref == 'refs/heads/master' }}
+      run: ./ci/scripts/redis-cache-cluster.sh devl
+    - name: Devl Build
+      if: ${{ github.event.ref != 'refs/heads/master' }}
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/buildPackage@master 
+    - name: dev - deploy stack
+      uses: EDL/ActionTemplates/.github/actions/CommonSteps/cloudFormation@master
+      with:
+        fileName: ci/cloudFormationTemplates/jd-catalog-to-edl-catalog-adapter-stack-devl.yaml
+        region: us-east-1
+        stackName: governance-UI
+        s3Bucket: jd-us01-commoninformationservices-devl-system
+        s3Prefix: templates/edl/jd-data-catalog
+     - name: dev - deploy stack
+       if: github.event.inputs.VERSION  == '1')
+       deployStack(env.CIS_DEVL_AWS_ACCT, "devl", "jd-data-catalog-governance-UI-stack")
+     - name: dev - deploy stack
+       if: github.event.inputs.VERSION  != '1')
+        deployStackVersion(env.CIS_DEVL_AWS_ACCT, "devl", "jd-data-catalog-governance-UI-stack-${VERSION}", "${VERSION}")
+    - name: dev - deploy code
+      deployCodeVersion(env.CIS_AWS_REGION, "devl", "${VERSION}")
+    - name: devl - health check
+      if: github.event.inputs.VERSION  == '1')
+       healthCheck("JohnDeereDataCatalog-devl-lakers")
+    - name: devl - health check
+      if: github.event.inputs.VERSION  != '1')
+       healthCheck("JohnDeereDataCatalog${VERSION}-devl")
